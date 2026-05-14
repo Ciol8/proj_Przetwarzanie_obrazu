@@ -10,7 +10,7 @@ class App(ctk.CTk):
         self.processor = ImageProcessor()
 
         self.title("Projekt - Detekcja i Interpretacja Obiektów")
-        self.geometry("1100x850")  # Zwiększyłem nieco wysokość na nowe przyciski
+        self.geometry("1100x850")  
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)

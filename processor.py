@@ -28,7 +28,6 @@ class ImageProcessor:
     def _save_to_history(self):
         """Zapisuje kopię aktualnego obrazu do historii przed zmianą."""
         if self.processed_image is not None:
-            # Ograniczamy historię np. do 10 kroków, żeby nie zabrać całej pamięci RAM
             if len(self.history) > 10:
                 self.history.pop(0)
             self.history.append(self.processed_image.copy())
