@@ -5,3 +5,4 @@
 *.txt
 /obrazy
 /przetworzone
+/__pycache__
