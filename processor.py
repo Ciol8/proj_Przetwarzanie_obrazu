@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  # <--- DODAJ TĘ LINIJKĘ
 import torch
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -360,60 +361,150 @@ class ImageProcessor:
         except Exception as e:
             print(f"Błąd podczas wykrywania poz YOLO: {e}")
 
+ # ==========================================
+    # OPTYMALNY TRANSPORT & PERFEKCYJNE DOPASOWANIE
     # ==========================================
-    # OPTYMALNY TRANSPORT (PAPAJIFIKACJA 3.0 - Szum bez Blura)
-    # ==========================================
-    def papajify_image(self, callback=None, max_distance=20, iterations=15):
-        """Miesza piksele malejącymi blokami, zachowując 100% oryginalnego histogramu."""
+    def papajify_image(self, callback=None, iterations=15):
+        """Używa AI do idealnego dopasowania twarzy ze specjalnego pliku (z obrotem o 15° CCW), a następnie w tym miejscu wykonuje sortowanie pikseli."""
         if self.processed_image is None:
             return
 
         self._save_to_history()
 
+        # 1. Wczytanie obrazu GŁÓWNEGO dla Optymalnego Transportu (brak twarzy)
         target_path = "jp2.jpg"
         if not os.path.exists(target_path):
             target_path = "jp2.png"
             if not os.path.exists(target_path):
                 print("Błąd: Brak pliku jp2.jpg lub jp2.png w głównym folderze!")
                 return
-
-        src = self.processed_image.copy()
         tgt = cv2.imread(target_path)
-        if tgt is None:
+        if tgt is None: 
             return
 
-        h, w = src.shape[:2]
-        tgt = cv2.resize(tgt, (w, h))
+        # 2. Wczytanie DEDYKOWANEJ twarzy dla Face Swapu (jeśli AI kogoś znajdzie)
+        target_face_path = "jp2twarz.jpg"
+        if not os.path.exists(target_face_path):
+            target_face_path = "jp2twarz.png"
+        
+        # Jeśli masz plik z twarzą to go użyje, jak nie - awaryjnie użyje zwykłego jp2.jpg
+        if os.path.exists(target_face_path):
+            tgt_face = cv2.imread(target_face_path)
+        else:
+            tgt_face = tgt.copy()
+
+        src = self.processed_image.copy()
+        h_img, w_img = src.shape[:2]
+
+        # --- DODANE: Dynamiczne obliczanie rozmiaru bloków ---
+        max_dim = max(h_img, w_img)
+        dyn_max_dist = int(max_dim * 0.10)  # 10% najdłuższego boku
+        # 1% boku, ale zabezpieczamy funkcją max(), by nigdy nie spadło poniżej 2 pikseli
+        dyn_min_dist = max(int(max_dim * 0.01), 2)
+        # -----------------------------------------------------
+
+        try:
+            from ultralytics import YOLO
+            if not hasattr(self, 'pose_model'):
+                print("Ładowanie modelu YOLOv8 Pose do detekcji twarzy...")
+                self.pose_model = YOLO('yolov8n-pose.pt')
+
+            # Szukamy twarzy na zdjęciu, które chcemy przerobić
+            results_src = self.pose_model(src, verbose=False)
+            kpts_src = results_src[0].keypoints
+
+            twarze_znalezione = False
+            
+            # Tworzymy puste, CZYSTO BIAŁE płótno. Posłuży jako wzór dla pikseli.
+            T_canvas = np.full((h_img, w_img, 3), 255, dtype=np.uint8)
+
+            # Bezpieczne sprawdzenie czy wykryto człowieka
+            if kpts_src is not None and len(kpts_src) > 0 and hasattr(kpts_src, 'xy') and kpts_src.xy.shape[1] >= 3:
+                
+                # Szukamy oczu i nosa na DEDYKOWANYM zdjęciu twarzy
+                results_tgt = self.pose_model(tgt_face, verbose=False)
+                kpts_tgt = results_tgt[0].keypoints
+                
+                h_tgt, w_tgt = tgt_face.shape[:2]
+                pts_jp2 = np.float32([[w_tgt*0.5, h_tgt*0.6], [w_tgt*0.65, h_tgt*0.4], [w_tgt*0.35, h_tgt*0.4]])
+                
+                if kpts_tgt is not None and len(kpts_tgt) > 0 and kpts_tgt.xy.shape[1] >= 3:
+                    jp2_pts = kpts_tgt.xy[0].cpu().numpy()
+                    if jp2_pts[0][0] > 0 and jp2_pts[1][0] > 0 and jp2_pts[2][0] > 0:
+                        pts_jp2 = np.float32([jp2_pts[0], jp2_pts[1], jp2_pts[2]])
+
+                # Tworzymy miękką, eliptyczną maskę dla wyciętej twarzy
+                jp2_mask = np.zeros((h_tgt, w_tgt), dtype=np.uint8)
+                cv2.ellipse(jp2_mask, (int(w_tgt*0.5), int(h_tgt*0.5)), (int(w_tgt*0.4), int(h_tgt*0.5)), 0, 0, 360, 255, -1)
+                jp2_mask = cv2.GaussianBlur(jp2_mask, (21, 21), 0)
+
+                for i in range(len(kpts_src.xy)):
+                    pts = kpts_src.xy[i].cpu().numpy()
+                    if len(pts) >= 3:
+                        nose = pts[0]; le = pts[1]; re = pts[2]
+                        if nose[0] > 0 and le[0] > 0 and re[0] > 0:
+                            twarze_znalezione = True
+                            
+                            # ===============================================
+                            # MAGIA: OBRÓT O 15 STOPNI CCW (W lewo) WOKÓŁ NOSA
+                            # ===============================================
+                            angle = 5  # Wartość dodatnia w OpenCV to obrót Counter-Clockwise (CCW)
+                            R = cv2.getRotationMatrix2D((float(nose[0]), float(nose[1])), angle, 1.0)
+                            
+                            # Przekształcamy oryginalne punkty oczu za pomocą macierzy obrotu
+                            pts_eyes = np.array([le, re])
+                            pts_ones = np.hstack([pts_eyes, np.ones((2, 1))])
+                            rotated_eyes = R.dot(pts_ones.T).T
+                            
+                            # Budujemy nowy trójkąt: Oryginalny Nos + Obrócone Oczy
+                            pts_img = np.float32([nose, rotated_eyes[0], rotated_eyes[1]])
+                            # ===============================================
+
+                            M = cv2.getAffineTransform(pts_jp2, pts_img)
+                            
+                            # Nakładanie zniekształconej i obróconej twarzy na białe płótno
+                            warped_jp2 = cv2.warpAffine(tgt_face, M, (w_img, h_img), borderValue=(255,255,255))
+                            warped_mask = cv2.warpAffine(jp2_mask, M, (w_img, h_img))
+                            
+                            mask_3ch = cv2.cvtColor(warped_mask, cv2.COLOR_GRAY2BGR) / 255.0
+                            T_canvas = (T_canvas * (1.0 - mask_3ch) + warped_jp2 * mask_3ch).astype(np.uint8)
+
+            if not twarze_znalezione:
+                print("Brak twarzy ludzkich. Zastosowanie filtra na całym oryginalnym jp2.")
+                T_canvas = cv2.resize(tgt, (w_img, h_img))
+                
+        except Exception as e:
+            print(f"Błąd AI: {e}. Wracam do trybu pełnoekranowego.")
+            T_canvas = cv2.resize(tgt, (w_img, h_img))
+
+        # ========================================================
+        # WŁAŚCIWY ALGORYTM MIESZANIA PIKSELI Z PASKIEM POSTĘPU
+        # ========================================================
         S = src.copy()
-
-        T_luma = 0.114 * tgt[:, :, 0] + 0.587 * tgt[:, :, 1] + 0.299 * tgt[:, :, 2]
-
-        # Tworzymy listę rozmiarów bloków, np. od 20 w dół aż do małego szumu (2x2 piksele)
-        distances = np.linspace(max_distance, 4, iterations).astype(int)
+        T_luma = 0.114 * T_canvas[:,:,0] + 0.587 * T_canvas[:,:,1] + 0.299 * T_canvas[:,:,2]
+        # Używamy naszych dynamicznych zmiennych zamiast wpisanych na sztywno liczb
+        distances = np.linspace(dyn_max_dist, dyn_min_dist, iterations).astype(int)
 
         for i in range(iterations):
             curr_dist = distances[i]
-            if curr_dist < 2: curr_dist = 2  # Zabezpieczenie rozmiaru
+            if curr_dist < dyn_min_dist: curr_dist = dyn_min_dist
 
-            # Losowe przesunięcie siatki, by unikać powtarzalnych wzorów
             offset_y = np.random.randint(0, curr_dist)
             offset_x = np.random.randint(0, curr_dist)
 
-            for y in range(offset_y, h - curr_dist, curr_dist):
-                for x in range(offset_x, w - curr_dist, curr_dist):
-
-                    t_luma_block = T_luma[y:y + curr_dist, x:x + curr_dist]
-
-                    # Ignorowanie czysto białego tła
+            for y in range(offset_y, h_img - curr_dist, curr_dist):
+                for x in range(offset_x, w_img - curr_dist, curr_dist):
+                    
+                    t_luma_block = T_luma[y:y+curr_dist, x:x+curr_dist]
+                    
                     if np.mean(t_luma_block) > 240:
                         continue
-
-                    s_block = S[y:y + curr_dist, x:x + curr_dist]
-
+                        
+                    s_block = S[y:y+curr_dist, x:x+curr_dist]
                     s_flat = s_block.reshape(-1, 3)
                     t_luma_flat = t_luma_block.reshape(-1)
 
-                    s_luma_flat = 0.114 * s_flat[:, 0] + 0.587 * s_flat[:, 1] + 0.299 * s_flat[:, 2]
+                    s_luma_flat = 0.114 * s_flat[:,0] + 0.587 * s_flat[:,1] + 0.299 * s_flat[:,2]
 
                     s_sort_idx = np.argsort(s_luma_flat)
                     t_sort_idx = np.argsort(t_luma_flat)
@@ -421,9 +512,8 @@ class ImageProcessor:
                     new_s_flat = np.zeros_like(s_flat)
                     new_s_flat[t_sort_idx] = s_flat[s_sort_idx]
 
-                    S[y:y + curr_dist, x:x + curr_dist] = new_s_flat.reshape(curr_dist, curr_dist, 3)
+                    S[y:y+curr_dist, x:x+curr_dist] = new_s_flat.reshape(curr_dist, curr_dist, 3)
 
-            # BRAK ROZMYCIA! Histogram pozostaje matematycznie nietknięty.
             self.processed_image = S.copy()
 
             if callback:

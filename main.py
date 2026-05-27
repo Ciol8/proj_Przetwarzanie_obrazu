@@ -18,11 +18,13 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from processor import ImageProcessor
+from game_of_life import game_of_life_step
 
 
 class InteractiveViewer(QGraphicsView):
-    def __init__(self):
+    def __init__(self, main_app):
         super().__init__()
+        self.app = main_app  # Zapisuje referencję do głównej aplikacji
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         self.photo = QGraphicsPixmapItem()
@@ -60,10 +62,24 @@ class InteractiveViewer(QGraphicsView):
 
         self.scale(zoom_factor, zoom_factor)
 
+    def mousePressEvent(self, event):
+        """Obsługa naciśnięcia prawego przycisku myszy - pokazuje oryginalny obraz."""
+        if event.button() == Qt.MouseButton.RightButton:
+            self.app.show_original_preview(True)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Obsługa zwolnienia prawego przycisku myszy - wraca do przetwarzanego obrazu."""
+        if event.button() == Qt.MouseButton.RightButton:
+            self.app.show_original_preview(False)
+        super().mouseReleaseEvent(event)
+
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.processor = ImageProcessor()
+        self.last_dir = ""  # Zapamiętywanie ostatniego folderu
+        self.gol_running = False  # Kontrola działania Easter Egga
 
         # Inicjalizacja odtwarzacza dźwięku dla efektu smażenia
         self.audio_output = QAudioOutput()
@@ -73,6 +89,7 @@ class App(QMainWindow):
 
         self.setWindowTitle("Projekt - Detekcja i Interpretacja Obiektów")
         self.resize(1200, 900)
+        self.setAcceptDrops(True)  # Włączenie obsługi Drag & Drop
 
         aero_font = QFont("Trebuchet MS", 10, QFont.Weight.Bold)
         QApplication.setFont(aero_font)
@@ -97,6 +114,7 @@ class App(QMainWindow):
             btn = QPushButton(text)
             btn.clicked.connect(command)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(f"Kliknij, aby {text.lower()}")
 
             # Włączamy antialiasing dla tekstu
             font = btn.font()
@@ -242,6 +260,9 @@ class App(QMainWindow):
             create_btn("Sobel", lambda: self.run_with_progress(lambda: self.apply_op("sobel")), "btn_green.png"))
         edges_layout.addWidget(
             create_btn("Laplacian", lambda: self.run_with_progress(lambda: self.apply_op("laplace")), "btn_green.png"))
+        self.btn_gol = create_btn("Uruchom Game of Life ❖", self.start_game_of_life, "glider.png")
+        edges_layout.addWidget(self.btn_gol)
+        self.btn_gol.hide()  # Domyślnie przycisk jest niewidoczny
 
         sidebar_layout.addWidget(self.frame_edges)
         self.frame_edges.hide()  # Domyślnie schowane
@@ -337,7 +358,7 @@ class App(QMainWindow):
         image_layout.setContentsMargins(10, 10, 10, 10)
 
         # ---- NOWY WIDOK ZAMIAST QLabel ----
-        self.viewer = InteractiveViewer()
+        self.viewer = InteractiveViewer(self)  # Przekazujemy referencję do głównej aplikacji
         image_layout.addWidget(self.viewer)
         # -----------------------------------
 
@@ -400,16 +421,20 @@ class App(QMainWindow):
     # LOGIKA APLIKACJI
     # ==========================================
     def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Wybierz obraz", "", "Images (*.png *.jpg *.jpeg *.bmp)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Wybierz obraz", self.last_dir, "Images (*.png *.jpg *.jpeg *.bmp)")
         if file_path and self.processor.load_image(file_path):
-            self.update_display(is_new_image=True)  # <- Tu dodano is_new_image=True
+            self.last_dir = os.path.dirname(file_path)  # Zapisujemy nowy folder
+            self.update_display(is_new_image=True)
 
     def save_file(self):
-        file_path, _ = QFileDialog.getSaveFileName(self, "Zapisz obraz", "", "PNG (*.png);;JPEG (*.jpg)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Zapisz obraz", self.last_dir, "PNG (*.png);;JPEG (*.jpg)")
         if file_path:
+            self.last_dir = os.path.dirname(file_path)  # Zapisujemy nowy folder
             self.processor.save_image(file_path)
 
     def run_with_progress(self, task_function):
+        self.gol_running = False  # Zatrzymuje symulację, jeśli działała
+        self.btn_gol.hide()       # Ukrywa przycisk Easter Egga
         """Pokazuje pasek, wymusza odświeżenie ekranu, puszcza AI/Filtr i chowa pasek."""
         # setRange(0, 0) sprawia, że pasek "lata" w lewo i prawo (tzw. indeterminate state)
         self.progress_bar.setRange(0, 0)
@@ -458,6 +483,7 @@ class App(QMainWindow):
                 lbl_in.setText(os.path.basename(folder))
 
         btn_in = QPushButton("Wybierz folder")
+        btn_in.setToolTip("Wybierz folder źródłowy do przetwarzania wsadowego")
         btn_in.setStyleSheet("background-color: rgba(255,255,255,30); color: white; border-radius: 5px; padding: 5px;")
         btn_in.clicked.connect(set_in)
         layout.addWidget(btn_in)
@@ -478,6 +504,7 @@ class App(QMainWindow):
                 lbl_wm.setText(os.path.basename(file))
 
         btn_wm = QPushButton("Wybierz plik")
+        btn_wm.setToolTip("Wybierz plik z znakiem wodnym do dodania")
         btn_wm.setStyleSheet("background-color: rgba(255,255,255,30); color: white; border-radius: 5px; padding: 5px;")
         btn_wm.clicked.connect(set_wm)
         layout.addWidget(btn_wm)
@@ -519,6 +546,7 @@ class App(QMainWindow):
                 dialog.accept()
 
         btn_start = QPushButton("ROZPOCZNIJ PRZETWARZANIE")
+        btn_start.setToolTip("Rozpocznij przetwarzanie wsadowe zaznaczonego folderu")
         btn_start.setStyleSheet(
             "background-color: rgba(46, 204, 113, 200); color: white; border-radius: 8px; padding: 10px; font-weight: bold;")
         btn_start.clicked.connect(start_batch)
@@ -527,10 +555,14 @@ class App(QMainWindow):
         dialog.exec()
 
     def undo(self):
+        self.gol_running = False  # Zatrzymuje symulację
+        self.btn_gol.hide()
         if self.processor.undo():
             self.update_display()
 
     def reset_image(self):
+        self.gol_running = False  # Zatrzymuje symulację
+        self.btn_gol.hide()
         self.processor.reset_image()
         self.update_display()
 
@@ -539,7 +571,12 @@ class App(QMainWindow):
 
         if op_type == "canny":
             self.processor.detect_edges_canny()
-        elif op_type == "sobel":
+            self.btn_gol.show()  # Pokazujemy przycisk po kliknięciu Canny
+        else:
+            self.btn_gol.hide()  # Chowamy dla Sobela / Laplaciana
+            self.gol_running = False
+
+        if op_type == "sobel":
             self.processor.detect_edges_sobel()
         elif op_type == "laplace":
             self.processor.detect_edges_laplacian()
@@ -690,6 +727,83 @@ class App(QMainWindow):
 
         # 3. KLUCZ: Wymuszamy na systemie Windows natychmiastowe przerysowanie okna
         QApplication.processEvents()
+
+    # ==========================================
+    # PODGLĄD PRZED/PO (PRAWY PRZYCISK MYSZY)
+    # ==========================================
+    def show_original_preview(self, show_original):
+        """Tymczasowo wyświetla oryginalny obraz, dopóki trzymany jest prawy przycisk myszy."""
+        if self.processor.original_image is None:
+            return
+
+        # Zależnie od tego, czy przycisk jest wciśnięty, pobieramy oryginał lub przetworzony
+        img_bgr = self.processor.original_image if show_original else self.processor.processed_image
+        
+        if img_bgr is not None:
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            h, w, ch = img_rgb.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(img_rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
+            
+            # Aktualizujemy obrazek na podglądzie (is_new_image=False, żeby nie resetował zooma!)
+            self.viewer.set_image(pixmap, is_new_image=False)
+
+    # ==========================================
+    # OBSŁUGA DRAG & DROP
+    # ==========================================
+    def dragEnterEvent(self, event):
+        """Sprawdza, czy przeciągany plik to obrazek, zanim pozwolimy go upuścić."""
+        if event.mimeData().hasUrls():
+            url = event.mimeData().urls()[0]
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+    def dropEvent(self, event):
+        """Wczytuje obraz po upuszczeniu go na okno programu."""
+        file_path = event.mimeData().urls()[0].toLocalFile()
+        if self.processor.load_image(file_path):
+            self.last_dir = os.path.dirname(file_path)  # Zapamiętujemy folder!
+            self.update_display(is_new_image=True)
+
+    # ==========================================
+    # EASTER EGG: CONWAY'S GAME OF LIFE
+    # ==========================================
+    def start_game_of_life(self):
+        """Uruchamia automatyczną symulację gry w życie na bazie krawędzi Canny."""
+        if self.processor.processed_image is None:
+            return
+
+        # Zapisujemy aktualny stan czystego Canny do historii.
+        # Dzięki temu kliknięcie "Undo" idealnie przywróci czarno-biały obraz!
+        self.processor._save_to_history()
+        
+        self.gol_running = True
+        
+        while self.gol_running:
+            img = self.processor.processed_image
+            if img is None:
+                break
+                
+            # Konwertujemy 3-kanałowy obraz BGR z procesora do 1 kanału (Grayscale)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Obliczamy następny krok algorytmu Conwaya
+            next_gray = game_of_life_step(gray)
+            
+            # Konwertujemy z powrotem do BGR i nadpisujemy obraz w procesorze
+            self.processor.processed_image = cv2.cvtColor(next_gray, cv2.COLOR_GRAY2BGR)
+            
+            # Odświeżamy widok ekranu oraz histogram
+            self.update_display()
+            
+            # Wymuszamy na PyQt6 przetworzenie zdarzeń systemowych (aby kliknięcie "Undo" mogło przerwać pętlę!)
+            QApplication.processEvents()
+            
+            # Prędkość ewolucji - 0.1 sekundy na każdą generację komórek
+            time.sleep(0.1)
 
 
 if __name__ == "__main__":
