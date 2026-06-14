@@ -3,6 +3,15 @@
 *.docx
 *.pth
 *.txt
+*.pyc
 /obrazy
 /przetworzone
-/__pycache__
+/__pycache__/*.pyc
+__pycache__
+best.pt
+*.tmp
+*.xml
+*.iml
+__pycache__/processor.cpython-313.pyc
+!projekt_21469.pdf
+.idea/.gitignore

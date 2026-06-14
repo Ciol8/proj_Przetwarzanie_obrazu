@@ -188,6 +188,60 @@ class ImageProcessor:
                             (255, 255, 255), 2)
 
         return detected_info  # Zwracamy listę wykrytych kotów do aplikacji
+
+    # ==========================================
+    # DETEKCJA RAS KOTÓW - YOLOv8 (best.pt)
+    # ==========================================
+    def detect_cats_yolov8(self, threshold=0.6):
+        """Wykrywa rasy kotów przy użyciu niestandardowego modelu YOLOv8s (best.pt)."""
+        if self.processed_image is None:
+            return []
+
+        self._save_to_history()
+
+        try:
+            from ultralytics import YOLO
+            if not hasattr(self, 'yolo_cat_model'):
+                print("Ładowanie niestandardowego modelu YOLOv8 dla kotów...")
+                if not os.path.exists('best_n.pt'):
+                    print("Błąd: Brak pliku 'best.pt' w głównym folderze projektu!")
+                    return ["Brak pliku best.pt"]
+                self.yolo_cat_model = YOLO('best_n.pt')
+
+            # Detekcja bez wypisywania logów w konsoli
+            results = self.yolo_cat_model(self.processed_image, verbose=False)
+            boxes = results[0].boxes
+            detected_info = []
+
+            for box in boxes:
+                conf = float(box.conf[0])
+                if conf >= threshold:
+                    cls_id = int(box.cls[0])
+                    # Dynamiczne pobranie nazwy rasy z wag modelu
+                    class_name = self.yolo_cat_model.names.get(cls_id, f"Klasa {cls_id}")
+                    confidence = int(conf * 100)
+
+                    detected_info.append(f"{class_name} ({confidence}%)")
+
+                    # Współrzędne ramki
+                    x_min, y_min, x_max, y_max = map(int, box.xyxy[0])
+
+                    # Zielona ramka (dla odróżnienia od Faster R-CNN)
+                    cv2.rectangle(self.processed_image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3)
+
+                    # Podpis w lewym dolnym rogu ramki
+                    text = f"{class_name}: {confidence}%"
+                    (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                    cv2.rectangle(self.processed_image, (x_min, y_max - text_h - 10), (x_min + text_w, y_max),
+                                  (0, 255, 0), -1)
+                    cv2.putText(self.processed_image, text, (x_min, y_max - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                                (255, 255, 255), 2)
+
+            return detected_info
+
+        except Exception as e:
+            print(f"Błąd podczas detekcji YOLOv8: {e}")
+            return []
     def threshold_otsu(self):
         """Metoda Otsu - automatycznie dobiera próg na podstawie histogramu."""
         if self.processed_image is not None:
@@ -209,15 +263,16 @@ class ImageProcessor:
     # PRZETWARZANIE WSADOWE (Batch Processing)
     # ==========================================
     def process_batch(self, input_folder, output_folder, target_size=None, watermark_path=None):
-        """Przetwarza wszystkie obrazy w folderze: zmienia rozmiar i/lub dodaje znak wodny."""
+        """Przetwarza wszystkie obrazy w folderze: zmienia rozmiar i/lub prawidłowo dodaje znak wodny z przezroczystością PNG."""
         if not os.path.exists(input_folder) or not os.path.exists(output_folder):
-            return False
+            return 0 # Zwracamy 0 zamiast False, bo GUI oczekuje liczby zapisanych plików
 
-        # Wczytanie znaku wodnego (jeśli podano)
+        # 1. Wczytanie znaku wodnego z zachowaniem kanału przezroczystości (IMREAD_UNCHANGED)
         watermark = None
         if watermark_path and os.path.exists(watermark_path):
             wm_bytes = np.fromfile(watermark_path, dtype=np.uint8)
-            watermark = cv2.imdecode(wm_bytes, cv2.IMREAD_COLOR)
+            # KLUCZOWA ZMIANA: IMREAD_UNCHANGED wczytuje obraz jako 4-kanałowy (BGRA)
+            watermark = cv2.imdecode(wm_bytes, cv2.IMREAD_UNCHANGED)
 
         success_count = 0
         valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp')
@@ -228,40 +283,60 @@ class ImageProcessor:
 
             filepath = os.path.join(input_folder, filename)
 
-            # Wczytywanie obrazu
+            # Wczytywanie obrazu wejściowego (3-kanałowy BGR)
             file_bytes = np.fromfile(filepath, dtype=np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
             if img is None:
                 continue
 
-            # 1. Zmiana rozdzielczości
+            # 2. Zmiana rozdzielczości obrazu głównego
             if target_size is not None:
                 img = cv2.resize(img, target_size, interpolation=cv2.INTER_AREA)
 
-            # 2. Znak wodny (prawy dolny róg)
+            # 3. Nakładanie znaku wodnego z precyzyjną maską przezroczystości
             if watermark is not None:
                 h_img, w_img = img.shape[:2]
 
-                # Skalowanie znaku wodnego (np. do 20% szerokości obrazka)
+                # Skalowanie znaku wodnego (do 20% szerokości obrazka)
                 wm_w = int(w_img * 0.2)
                 scale = wm_w / watermark.shape[1]
                 wm_h = int(watermark.shape[0] * scale)
 
                 if wm_w > 0 and wm_h > 0:
+                    # Skalujemy cały 4-kanałowy znak wodny
                     wm_resized = cv2.resize(watermark, (wm_w, wm_h), interpolation=cv2.INTER_AREA)
 
-                    # Definiowanie obszaru (ROI) w prawym dolnym rogu (z małym marginesem)
+                    # Definiowanie obszaru (ROI) w prawym dolnym rogu
                     margin = 10
                     y1, y2 = h_img - wm_h - margin, h_img - margin
                     x1, x2 = w_img - wm_w - margin, w_img - margin
 
-                    # Nakładanie znaku wodnego (blending z przezroczystością 50%)
                     if y1 > 0 and x1 > 0:
+                        # Wyciągamy tło z oryginalnego zdjęcia, na które nałożymy logo
                         roi = img[y1:y2, x1:x2]
-                        blended = cv2.addWeighted(roi, 0.7, wm_resized, 0.5, 0)
-                        img[y1:y2, x1:x2] = blended
 
-            # Zapisywanie
+                        # Jeśli wczytany plik posiadał kanał alfa (ma 4 kanały)
+                        if wm_resized.shape[2] == 4:
+                            # Separujemy czyste kanały kolorów BGR od kanału maski Alfa
+                            wm_rgb = wm_resized[:, :, :3]
+                            # Normalizujemy maskę alfa do zakresu 0.0 - 1.0 i duplikujemy na 3 kanały
+                            alpha_mask = wm_resized[:, :, 3] / 255.0
+                            alpha_mask_3ch = cv2.merge([alpha_mask, alpha_mask, alpha_mask])
+
+                            # Dodatkowo mnożymy przez krycie znaku wodnego (np. max 50% widoczności loga)
+                            logo_opacity = 0.5
+                            alpha_mask_3ch = alpha_mask_3ch * logo_opacity
+
+                            # MATEMATYCZNE BLENDOWANIE PIKSELI:
+                            # piksel_wynikowy = oryginał * (1 - maska_alfa) + logo * maska_alfa
+                            blended = roi * (1.0 - alpha_mask_3ch) + wm_rgb * alpha_mask_3ch
+                            img[y1:y2, x1:x2] = blended.astype(np.uint8)
+                        else:
+                            # Awaryjnie, jeśli ktoś podał jako znak wodny plik bez przezroczystości (np. JPG)
+                            blended = cv2.addWeighted(roi, 0.7, wm_resized, 0.3, 0)
+                            img[y1:y2, x1:x2] = blended
+
+            # Zapisywanie przetworzonego pliku
             out_filepath = os.path.join(output_folder, filename)
             extension = filename.split('.')[-1]
             is_success, im_buf_arr = cv2.imencode(f'.{extension}', img)
@@ -270,7 +345,6 @@ class ImageProcessor:
                 success_count += 1
 
         return success_count
-
     # ==========================================
     # FUNKCJE AUTORSKIE
     # ==========================================
@@ -295,7 +369,7 @@ class ImageProcessor:
         # Konwertujemy na HSV, wyciągamy kanał S (nasycenie), podbijamy go i łączymy z powrotem
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         h, s, v = cv2.split(hsv)
-        s = cv2.multiply(s, 4.0)  # Zwiększamy nasycenie 3-krotnie
+        s = cv2.multiply(s, 4.0)  # Zwiększamy nasycenie 4-krotnie
         s = np.clip(s, 0, 255).astype(np.uint8)  # Ucinamy wartości powyżej 255
         hsv = cv2.merge([h, s, v])
         img = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
@@ -383,7 +457,7 @@ class ImageProcessor:
             return
 
         # 2. Wczytanie DEDYKOWANEJ twarzy dla Face Swapu (jeśli AI kogoś znajdzie)
-        target_face_path = "jp2twarz.jpg"
+        target_face_path = "jp2twarz.png"
         if not os.path.exists(target_face_path):
             target_face_path = "jp2twarz.png"
         
@@ -414,20 +488,20 @@ class ImageProcessor:
             kpts_src = results_src[0].keypoints
 
             twarze_znalezione = False
-            
+
             # Tworzymy puste, CZYSTO BIAŁE płótno. Posłuży jako wzór dla pikseli.
             T_canvas = np.full((h_img, w_img, 3), 255, dtype=np.uint8)
 
             # Bezpieczne sprawdzenie czy wykryto człowieka
             if kpts_src is not None and len(kpts_src) > 0 and hasattr(kpts_src, 'xy') and kpts_src.xy.shape[1] >= 3:
-                
+
                 # Szukamy oczu i nosa na DEDYKOWANYM zdjęciu twarzy
                 results_tgt = self.pose_model(tgt_face, verbose=False)
                 kpts_tgt = results_tgt[0].keypoints
-                
+
                 h_tgt, w_tgt = tgt_face.shape[:2]
                 pts_jp2 = np.float32([[w_tgt*0.5, h_tgt*0.6], [w_tgt*0.65, h_tgt*0.4], [w_tgt*0.35, h_tgt*0.4]])
-                
+
                 if kpts_tgt is not None and len(kpts_tgt) > 0 and kpts_tgt.xy.shape[1] >= 3:
                     jp2_pts = kpts_tgt.xy[0].cpu().numpy()
                     if jp2_pts[0][0] > 0 and jp2_pts[1][0] > 0 and jp2_pts[2][0] > 0:
@@ -444,35 +518,35 @@ class ImageProcessor:
                         nose = pts[0]; le = pts[1]; re = pts[2]
                         if nose[0] > 0 and le[0] > 0 and re[0] > 0:
                             twarze_znalezione = True
-                            
+
                             # ===============================================
                             # MAGIA: OBRÓT O 15 STOPNI CCW (W lewo) WOKÓŁ NOSA
                             # ===============================================
                             angle = 5  # Wartość dodatnia w OpenCV to obrót Counter-Clockwise (CCW)
                             R = cv2.getRotationMatrix2D((float(nose[0]), float(nose[1])), angle, 1.0)
-                            
+
                             # Przekształcamy oryginalne punkty oczu za pomocą macierzy obrotu
                             pts_eyes = np.array([le, re])
                             pts_ones = np.hstack([pts_eyes, np.ones((2, 1))])
                             rotated_eyes = R.dot(pts_ones.T).T
-                            
+
                             # Budujemy nowy trójkąt: Oryginalny Nos + Obrócone Oczy
                             pts_img = np.float32([nose, rotated_eyes[0], rotated_eyes[1]])
                             # ===============================================
 
                             M = cv2.getAffineTransform(pts_jp2, pts_img)
-                            
+
                             # Nakładanie zniekształconej i obróconej twarzy na białe płótno
                             warped_jp2 = cv2.warpAffine(tgt_face, M, (w_img, h_img), borderValue=(255,255,255))
                             warped_mask = cv2.warpAffine(jp2_mask, M, (w_img, h_img))
-                            
+
                             mask_3ch = cv2.cvtColor(warped_mask, cv2.COLOR_GRAY2BGR) / 255.0
                             T_canvas = (T_canvas * (1.0 - mask_3ch) + warped_jp2 * mask_3ch).astype(np.uint8)
 
             if not twarze_znalezione:
                 print("Brak twarzy ludzkich. Zastosowanie filtra na całym oryginalnym jp2.")
                 T_canvas = cv2.resize(tgt, (w_img, h_img))
-                
+
         except Exception as e:
             print(f"Błąd AI: {e}. Wracam do trybu pełnoekranowego.")
             T_canvas = cv2.resize(tgt, (w_img, h_img))
@@ -494,25 +568,48 @@ class ImageProcessor:
 
             for y in range(offset_y, h_img - curr_dist, curr_dist):
                 for x in range(offset_x, w_img - curr_dist, curr_dist):
-                    
-                    t_luma_block = T_luma[y:y+curr_dist, x:x+curr_dist]
-                    
-                    if np.mean(t_luma_block) > 240:
+
+                    t_luma_block = T_luma[y:y + curr_dist, x:x + curr_dist]
+
+                    # Tworzymy maskę: Prawda (True) dla pikseli twarzy, Fałsz (False) dla białego tła
+                    active_mask = t_luma_block < 240
+
+                    # Jeśli w całym kwadracie nie ma ani jednego piksela twarzy - pomijamy
+                    if not np.any(active_mask):
                         continue
-                        
-                    s_block = S[y:y+curr_dist, x:x+curr_dist]
+
+                    s_block = S[y:y + curr_dist, x:x + curr_dist]
+
+                    # Spłaszczamy tablice
                     s_flat = s_block.reshape(-1, 3)
                     t_luma_flat = t_luma_block.reshape(-1)
+                    mask_flat = active_mask.reshape(-1)
 
-                    s_luma_flat = 0.114 * s_flat[:,0] + 0.587 * s_flat[:,1] + 0.299 * s_flat[:,2]
+                    # ==========================================
+                    # MAGIA: Wyciągamy TYLKO te piksele, które leżą na twarzy!
+                    # ==========================================
+                    s_active = s_flat[mask_flat]
+                    t_active = t_luma_flat[mask_flat]
 
-                    s_sort_idx = np.argsort(s_luma_flat)
-                    t_sort_idx = np.argsort(t_luma_flat)
+                    # Liczymy jasność TYLKO dla wyciągniętych pikseli
+                    s_active_luma = 0.114 * s_active[:, 0] + 0.587 * s_active[:, 1] + 0.299 * s_active[:, 2]
 
-                    new_s_flat = np.zeros_like(s_flat)
-                    new_s_flat[t_sort_idx] = s_flat[s_sort_idx]
+                    # Sortujemy tylko te wyciągnięte piksele
+                    s_sort_idx = np.argsort(s_active_luma)
+                    t_sort_idx = np.argsort(t_active)
 
-                    S[y:y+curr_dist, x:x+curr_dist] = new_s_flat.reshape(curr_dist, curr_dist, 3)
+                    # Układamy je w nowej kolejności
+                    new_s_active = np.zeros_like(s_active)
+                    new_s_active[t_sort_idx] = s_active[s_sort_idx]
+
+                    # Kopiujemy oryginalny układ pikseli z bloku (aby nienaruszone tło zachowało swoje miejsce)
+                    new_s_flat = s_flat.copy()
+
+                    # Podmieniamy W KOPII tylko te piksele, które posortowaliśmy (te na twarzy)
+                    new_s_flat[mask_flat] = new_s_active
+
+                    # Wrzucamy idealnie spasowany blok z powrotem na główny obraz
+                    S[y:y + curr_dist, x:x + curr_dist] = new_s_flat.reshape(curr_dist, curr_dist, 3)
 
             self.processed_image = S.copy()
 

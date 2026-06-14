@@ -4,7 +4,6 @@ import numpy as np
 
 def game_of_life_step(binary_img):
     """
-    Oblicza kolejną generację gry Game of Life.
     binary_img: jedno-kanałowy obraz grayscale (wartości 0 lub 255)
     """
     # Zamiana wartości 0/255 na 0 i 1 dla łatwiejszego liczenia

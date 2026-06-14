@@ -110,11 +110,14 @@ class App(QMainWindow):
         # ==========================================
         # FUNKCJE TWORZENIA PRZYCISKÓW Z TEKSTURAMI
         # ==========================================
-        def create_btn(text, command, texture_file):
+        # Zmieniona definicja:
+        def create_btn(text, command, texture_file, tooltip=""):
             btn = QPushButton(text)
             btn.clicked.connect(command)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(f"Kliknij, aby {text.lower()}")
+
+            # Używamy bogatego opisu, jeśli jest podany
+            btn.setToolTip(tooltip if tooltip else f"Kliknij, aby {text.lower()}")
 
             # Włączamy antialiasing dla tekstu
             font = btn.font()
@@ -173,8 +176,9 @@ class App(QMainWindow):
         top_layout.setSpacing(15)
 
         # Używamy niebieskiego dla I/O
-        self.btn_load = create_btn("Wczytaj Obraz", self.open_file, "btn_blue.png")
-        self.btn_save = create_btn("Zapisz Obraz", self.save_file, "btn_blue.png")
+        self.btn_load = create_btn("Wczytaj Obraz", self.open_file, "btn_blue.png", "Otwiera okno dialogowe wyboru pliku graficznego z dysku.")
+        self.btn_save = create_btn("Zapisz Obraz", self.save_file, "btn_blue.png",
+                                   "Zapisuje obecny stan obrazu do pliku na dysku.")
         top_layout.addWidget(self.btn_load)
         top_layout.addWidget(self.btn_save)
 
@@ -198,12 +202,17 @@ class App(QMainWindow):
                 """)
         self.progress_bar.hide()  # Ukryty, dopóki nic się nie przetwarza
         top_layout.addWidget(self.progress_bar)
-
+        self.lbl_time = QLabel("")
+        self.lbl_time.setStyleSheet(
+            "color: white; font-weight: bold; background: transparent; border: none; margin-left: 10px;")
+        top_layout.addWidget(self.lbl_time)
         top_layout.addStretch()
 
         # Używamy żółtego/pomarańczowego dla ostrzegawczych operacji
-        self.btn_undo = create_btn("Cofnij (Undo)", self.undo, "btn_yellow.png")
-        self.btn_reset = create_btn("Resetuj", self.reset_image, "btn_yellow.png")
+        self.btn_undo = create_btn("Cofnij (Undo)", self.undo, "btn_yellow.png",
+                                   "Wraca do poprzedniego stanu obrazu i zatrzymuje aktywne symulacje.")
+        self.btn_reset = create_btn("Resetuj", self.reset_image, "btn_yellow.png",
+                                    "Usuwa wszystkie efekty i przywraca oryginalnie załadowane zdjęcie.")
         top_layout.addWidget(self.btn_undo)
         top_layout.addWidget(self.btn_reset)
 
@@ -244,7 +253,8 @@ class App(QMainWindow):
 
         # --- ROZWIJANE MENU KRAWĘDZIE (Zielone) ---
         self.edges_visible = False
-        self.btn_edges_toggle = create_btn("Krawędzie ▼", self.toggle_edges, "btn_green.png")
+        self.btn_edges_toggle = create_btn("Krawędzie ▼", self.toggle_edges, "btn_green.png",
+                                           "Rozwija menu z filtrami wykrywającymi krawędzie obrazu.")
         sidebar_layout.addWidget(self.btn_edges_toggle)
 
         self.frame_edges = QFrame()
@@ -255,12 +265,16 @@ class App(QMainWindow):
 
         # Zmodyfikowane pod run_with_progress:
         edges_layout.addWidget(
-            create_btn("Canny", lambda: self.run_with_progress(lambda: self.apply_op("canny")), "btn_green.png"))
+            create_btn("Canny", lambda: self.run_with_progress(lambda: self.apply_op("canny")), "btn_green.png",
+                       "Detektor krawędzi Canny'ego: ostry, wyraźny zarys z użyciem podwójnego progowania."))
         edges_layout.addWidget(
-            create_btn("Sobel", lambda: self.run_with_progress(lambda: self.apply_op("sobel")), "btn_green.png"))
+            create_btn("Sobel", lambda: self.run_with_progress(lambda: self.apply_op("sobel")), "btn_green.png",
+                       "Filtr Sobela: akcentuje pionowe i poziome gradienty jasności obrazu."))
         edges_layout.addWidget(
-            create_btn("Laplacian", lambda: self.run_with_progress(lambda: self.apply_op("laplace")), "btn_green.png"))
-        self.btn_gol = create_btn("Uruchom Game of Life ❖", self.start_game_of_life, "glider.png")
+            create_btn("Laplacian", lambda: self.run_with_progress(lambda: self.apply_op("laplace")), "btn_green.png",
+                       "Laplasjan: wykrywa wszystkie krawędzie na podstawie szybkiej zmiany pikseli (2. pochodnej)."))
+        self.btn_gol = create_btn("Uruchom Game of Life", self.start_game_of_life, "glider.png",
+                                  "Uruchamia na krawędziach słynny automat komórkowy Conwaya w locie.")
         edges_layout.addWidget(self.btn_gol)
         self.btn_gol.hide()  # Domyślnie przycisk jest niewidoczny
 
@@ -269,7 +283,8 @@ class App(QMainWindow):
 
         # --- ROZWIJANE MENU PROGOWANIE (Zielone) ---
         self.thresh_visible = False
-        self.btn_thresh_toggle = create_btn("Progowanie ▼", self.toggle_thresh, "btn_green.png")
+        self.btn_thresh_toggle = create_btn("Progowanie ▼", self.toggle_thresh, "btn_green.png",
+                                            "Rozwija menu binaryzacji (podziału na czerń i biel).")
         sidebar_layout.addWidget(self.btn_thresh_toggle)
 
         self.frame_thresh = QFrame()
@@ -280,12 +295,14 @@ class App(QMainWindow):
 
         # Zmodyfikowane pod run_with_progress:
         thresh_layout.addWidget(
-            create_btn("Binarne", lambda: self.run_with_progress(lambda: self.apply_op("thresh_bin")), "btn_green.png"))
+            create_btn("Binarne", lambda: self.run_with_progress(lambda: self.apply_op("thresh_bin")), "btn_green.png",
+                       "Zwykłe progowanie binarne - sztywny próg jasności rozdzielający piksele."))
         thresh_layout.addWidget(
-            create_btn("Otsu", lambda: self.run_with_progress(lambda: self.apply_op("thresh_otsu")), "btn_green.png"))
+            create_btn("Otsu", lambda: self.run_with_progress(lambda: self.apply_op("thresh_otsu")), "btn_green.png",
+                       "Metoda Otsu: sprytnie i automatycznie wylicza optymalny próg na bazie histogramu."))
         thresh_layout.addWidget(
             create_btn("Adaptacyjne", lambda: self.run_with_progress(lambda: self.apply_op("thresh_adapt")),
-                       "btn_green.png"))
+                       "btn_green.png", "Adaptacyjne: szuka progu oddzielnie dla lokalnych, małych obszarów obrazu."))
 
         sidebar_layout.addWidget(self.frame_thresh)
         self.frame_thresh.hide()  # Domyślnie schowane
@@ -295,7 +312,12 @@ class App(QMainWindow):
         # AI i Autorskie (Fioletowe)
         sidebar_layout.addWidget(QLabel("SZTUCZNA INTELIGENCJA",
                                         styleSheet="color: #E0F7FA; font-weight: bold; font-size: 11px; background: transparent; border: none;"))
-
+        # Dodaj to pod przyciskiem "Wykryj Koty" w sekcji fioletowej
+        sidebar_layout.addWidget(
+            create_btn("Wykryj Koty YOLOv8", lambda: self.run_with_progress(self.run_yolo_cat_detection),
+                       "btn_purple.png",
+                       "Skanuje zdjęcie niestandardowym modelem YOLOv8s (best.pt) w celu szybkiej klasyfikacji ras kotów.")
+        )
         # --- NOWY ELEMENT: Suwak Threshold ---
         slider_layout = QHBoxLayout()
         self.lbl_thresh = QLabel("Próg AI: 60%")
@@ -312,8 +334,7 @@ class App(QMainWindow):
         sidebar_layout.addLayout(slider_layout)
         # -------------------------------------
 
-        sidebar_layout.addWidget(
-            create_btn("Wykryj Koty", lambda: self.run_with_progress(self.run_nn_detection), "btn_purple.png"))
+        sidebar_layout.addWidget(create_btn("Wykryj Koty", lambda: self.run_with_progress(self.run_nn_detection), "btn_purple.png", "Faster R-CNN: Skanuje zdjęcie w poszukiwaniu kotów i próbuje rozpoznać ich rasę."))
 
         # --- NOWY ELEMENT: Tekst z wynikiem klasyfikacji w GUI ---
         self.lbl_ai_result = QLabel("")
@@ -324,16 +345,17 @@ class App(QMainWindow):
         sidebar_layout.addWidget(self.lbl_ai_result)
         # -------------------------------------
 
-        sidebar_layout.addWidget(
-            create_btn("Wykryj Pozy", lambda: self.run_with_progress(self.run_pose_detection), "btn_purple.png"))
+        sidebar_layout.addWidget(create_btn("Wykryj Pozy", lambda: self.run_with_progress(self.run_pose_detection), "btn_purple.png", "YOLOv8 Pose: Wykrywa ludzi i precyzyjnie nakłada im szkielet stawów."))
 
         # Narzędzia (Żółte)
         sidebar_layout.addWidget(QLabel("INNE NARZĘDZIA",
                                         styleSheet="color: #E0F7FA; font-weight: bold; font-size: 11px; background: transparent; border: none;"))# Usunięto run_with_progress, bo run_deep_fry ma teraz własną animację
-        sidebar_layout.addWidget(create_btn("Usmaż Obraz 🍟", self.run_deep_fry, "btn_yellow.png"))
-        sidebar_layout.addWidget(create_btn("Przetwarzanie Wsadowe", self.open_batch_window, "btn_yellow.png"))
-        # Wklej to w sekcji żółtych przycisków w __init__
-        sidebar_layout.addWidget(create_btn("JanPaweł-ifikacja 💛", self.start_papajify, "btn_yellow.png"))
+        sidebar_layout.addWidget(create_btn("Usmaż Obraz", self.run_deep_fry, "btn_yellow.png",
+                                            "Ekstremalnie przesterowuje saturację, kontrast i wyostrzanie (Deep Fry)."))
+        sidebar_layout.addWidget(create_btn("Przetwarzanie Wsadowe", self.open_batch_window, "btn_yellow.png",
+                                            "Narzędzie do skalowania i dodawania znaku wodnego do całych folderów."))
+        sidebar_layout.addWidget(create_btn("Papieżowanie", self.start_papajify, "btn_yellow.png",
+                                            "YOLO Face Swap twarzy na JP2. Przy braku ludzi, wykonuje optymalny transport pikseli."))
 
         sidebar_layout.addStretch()
         content_layout.addWidget(sidebar_container)
@@ -433,20 +455,22 @@ class App(QMainWindow):
             self.processor.save_image(file_path)
 
     def run_with_progress(self, task_function):
-        self.gol_running = False  # Zatrzymuje symulację, jeśli działała
-        self.btn_gol.hide()       # Ukrywa przycisk Easter Egga
-        """Pokazuje pasek, wymusza odświeżenie ekranu, puszcza AI/Filtr i chowa pasek."""
-        # setRange(0, 0) sprawia, że pasek "lata" w lewo i prawo (tzw. indeterminate state)
+        self.gol_running = False
+        self.btn_gol.hide()
         self.progress_bar.setRange(0, 0)
         self.progress_bar.show()
-
-        # WYMUSZENIE ODŚWIEŻENIA UI (bez tego aplikacja zamarznie zanim pokaże pasek!)
+        self.lbl_time.setText("Przetwarzanie...")  # Info przed startem
         QApplication.processEvents()
 
-        # Odpalenie docelowej funkcji (np. sieci neuronowej)
+        # START MIERZENIA
+        start_time = time.time()
+
         task_function()
 
-        # Ukrycie paska po zakończeniu
+        # STOP MIERZENIA I AKTUALIZACJA
+        end_time = time.time()
+        elapsed = end_time - start_time
+        self.lbl_time.setText(f"Czas: {elapsed:.2f} s")
         self.progress_bar.hide()
 
     # ==========================================
@@ -605,6 +629,26 @@ class App(QMainWindow):
 
             self.update_display()
 
+    def run_yolo_cat_detection(self):
+        """Obsługuje kliknięcie przycisku detekcji YOLOv8."""
+        if self.processor.original_image is not None:
+            # Pobranie wartości progu z suwaka
+            current_threshold = self.slider_thresh.value() / 100.0
+
+            # Wywołanie detekcji i odebranie wyników
+            wyniki = self.processor.detect_cats_yolov8(threshold=current_threshold)
+
+            if wyniki:
+                if "Brak pliku" in wyniki[0]:
+                    self.lbl_ai_result.setText("BŁĄD:\nUmieść 'best.pt' w folderze projektu!")
+                else:
+                    tekst = "\n".join(wyniki)
+                    self.lbl_ai_result.setText(f"YOLOv8 WYKRYTO:\n{tekst}")
+            else:
+                self.lbl_ai_result.setText("YOLOv8: Nie wykryto obiektów")
+
+            self.update_display()
+
     def run_pose_detection(self):
         if self.processor.original_image is not None:
             self.processor.detect_pose()
@@ -633,7 +677,7 @@ class App(QMainWindow):
         # 4. Odpalamy dźwięk skwierczenia oleju
         self.player.setPosition(0)  # Przewiń do początku pliku
         self.player.play()
-
+        start_time = time.time()
         # 5. Pętla animacji: płynnie zmieniamy alfa od 1.0 (oryginał) do 0.0 (usmażony)
         for step in range(steps + 1):
             alpha = 1.0 - (step / steps)
@@ -650,6 +694,8 @@ class App(QMainWindow):
 
             # Wymuszenie na PyQt6 natychmiastowego przerysowania ekranu i sen
             QApplication.processEvents()
+            elapsed = time.time() - start_time
+            self.lbl_time.setText(f"Czas: {elapsed:.2f} s")
             time.sleep(delay)
 
         # 6. Po 3 sekundach upewniamy się, że zostaje czysty, usmażony obraz, i sprzątamy GUI
@@ -700,6 +746,9 @@ class App(QMainWindow):
     # ==========================================
     def start_papajify(self):
         """Przygotowuje okno i odpala procesor."""
+        self.progress_bar.show()
+        self.papajify_start_time = time.time()
+        self.lbl_time.setText("Przetwarzanie...")
         if self.processor.processed_image is None:
             return
 
@@ -718,14 +767,13 @@ class App(QMainWindow):
         self.progress_bar.hide()
 
     def papajify_step_callback(self, aktualna_iteracja, wszystkie_iteracje):
-        """Ta funkcja wykonuje się automatycznie po KAŻDEJ iteracji w procesorze."""
-        # 1. Aktualizujemy wartość paska postępu (np. wskakuje na 3 z 12)
         self.progress_bar.setValue(aktualna_iteracja)
 
-        # 2. Odświeżamy etykietę ze zdjęciem oraz histogram na ekranie
-        self.update_display()
+        # Obliczenie czasu w locie i aktualizacja interfejsu
+        elapsed = time.time() - self.papajify_start_time
+        self.lbl_time.setText(f"Czas: {elapsed:.2f} s")
 
-        # 3. KLUCZ: Wymuszamy na systemie Windows natychmiastowe przerysowanie okna
+        self.update_display()
         QApplication.processEvents()
 
     # ==========================================
