@@ -5,8 +5,7 @@ Artur Nieżurawski, nr albumu 21469
 
 ---
 
-<img width="2000" height="2828" alt="image" src="https://github.com/user-attachments/assets/5bf7f1d5-888a-47ee-942f-b1d35d295968" />
-
+<img width="829" height="644" alt="image" src="https://github.com/user-attachments/assets/c3772fd8-c481-4dd6-aaf4-ef4b8d158ebf" />
 
 ## Opis projektu
 
