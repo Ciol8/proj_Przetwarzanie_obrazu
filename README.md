@@ -5,6 +5,9 @@ Artur Nieżurawski, nr albumu 21469
 
 ---
 
+<img width="2000" height="2828" alt="image" src="https://github.com/user-attachments/assets/5bf7f1d5-888a-47ee-942f-b1d35d295968" />
+
+
 ## Opis projektu
 
 Zaawansowana aplikacja desktopowa do interaktywnego przetwarzania i interpretacji obrazów cyfrowych. Interfejs graficzny utrzymany jest w estetyce Frutiger Aero i łączy klasyczne algorytmy filtracji oraz binaryzacji z nowoczesnymi modelami głębokiego uczenia do detekcji obiektów i estymacji póz człowieka. Aplikacja oferuje ponadto autorski efekt wizualny, system przetwarzania wsadowego oraz ukrytą symulację automatu komórkowego Conwaya.
